@@ -1,50 +1,55 @@
 # Hermes Agent MemPalace Memory Plugin
+[中文版](README_zh.md) | English
 
-A local-first, zero-API memory provider plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent), backed by [MemPalace](https://github.com/MemPalace/mempalace).
+## What is this?
+This is a **Memory Plugin** for [Hermes Agent](https://github.com/NousResearch/hermes-agent). It gives Hermes a "long-term memory" so it can remember what you talked about across different days and sessions.
 
-MemPalace provides highly efficient semantic retrieval and offline knowledge graph capabilities, enabling Hermes to recall past conversations and durable facts without blowing up the context window.
+## What is the relationship with MemPalace?
+[MemPalace](https://github.com/MemPalace/mempalace) is an excellent, standalone, local AI memory database. Think of it as a highly organized brain or filing cabinet for AI.
 
-## Features
+This plugin is the **bridge** that connects Hermes Agent to MemPalace. 
+- MemPalace does the heavy lifting: storing facts, embedding text, and searching for context.
+- This Plugin tells Hermes *how* to talk to MemPalace, so Hermes automatically saves your conversations and recalls past facts before replying to you.
 
-- **Automatic Sync**: Quietly saves completed turns to local SQLite/ChromaDB.
-- **Context Prefetching**: Uses BM25 + Vector hybrid search to pull relevant historical turns into the active context before Hermes replies.
-- **Zero-API Cost**: Entirely local embedding generation (defaults to all-MiniLM-L6-v2) and retrieval.
-- **Fault-isolated**: Fully wrapped in try/except blocks; if the memory backend fails, it falls back gracefully without crashing your agent session.
+## Why do I need this? (Use Cases)
+By default, when you start a new chat with Hermes, it forgets everything from previous chats. 
+With this plugin enabled:
+- **It Remembers You**: Tell Hermes your name or preferences once, and it remembers forever.
+- **Cross-Session Recall**: If you ask "What were we working on yesterday?", Hermes can search its MemPalace brain and tell you.
+- **Automatic Background Sync**: You don't have to do anything. Every time Hermes answers you, it quietly files the conversation into MemPalace.
+- **Context Prefetching**: Before Hermes even starts typing a reply, this plugin secretly searches past memories for relevant context and injects them into Hermes's prompt. 
+- **100% Local & Free**: It runs entirely on your machine. No APIs, no subscriptions, no data sent to the cloud.
 
-## Installation
+## Installation for Beginners
 
-1. Ensure the required backend package is installed in Hermes's virtual environment:
-   ```bash
-   ~/.hermes/hermes-agent/venv/bin/pip install mempalace chromadb orjson
-   ```
+### Step 1: Install the Engine (MemPalace)
+First, we need to install the MemPalace engine into Hermes's Python environment.
+```bash
+~/.hermes/hermes-agent/venv/bin/pip install mempalace chromadb orjson
+```
 
-2. Clone or copy this repository into your Hermes plugins directory:
-   ```bash
-   cp -r hermes-mempalace-plugin ~/.hermes/plugins/mempalace
-   ```
+### Step 2: Download the Plugin
+Download this plugin into Hermes's plugin directory:
+```bash
+git clone https://github.com/Inmanager/hermes-plugin-mempalace ~/.hermes/plugins/mempalace
+```
 
-3. Enable the plugin in your `~/.hermes/config.yaml`:
-   ```yaml
-   plugins:
-     enabled:
-       - mempalace
+### Step 3: Turn it On
+Tell Hermes to use this new memory plugin.
+Enable the plugin:
+```bash
+hermes plugins enable mempalace
+```
 
-   memory:
-     provider: mempalace
-   ```
+Edit your Hermes configuration file (`~/.hermes/config.yaml`) to set it as the default memory provider. Add or update the `memory` section:
+```yaml
+memory:
+  provider: mempalace
+```
 
-4. Verify installation:
-   ```bash
-   hermes memory status
-   ```
-   You should see `mempalace` listed as the active provider.
-
-## How it Works
-
-The plugin implements the `MemoryProvider` ABC from Hermes Core. 
-
-- **Storage Path**: Memories are stored locally at `~/.hermes/mempalace_db` (or inside the active profile directory if configured).
-- **Tools Injected**:
-  - `mempalace_mine`: For explicit, durable fact memorization.
-  - `mempalace_search`: For explicit historical querying.
-  - `mempalace_profile`: For reading all facts stored globally.
+### Step 4: Verify
+Run this command to check if it's working:
+```bash
+hermes memory status
+```
+If you see `mempalace` listed as the active provider, you're all set!
