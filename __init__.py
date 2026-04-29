@@ -81,9 +81,12 @@ class MemPalaceMemoryProvider(MemoryProvider):
         self._hermes_home = kwargs.get("hermes_home", "")
         
     def _get_db_dir(self):
-        if self._hermes_home:
-            return os.path.join(str(self._hermes_home), "mempalace_db")
-        return os.path.expanduser("~/.hermes/mempalace_db")
+        try:
+            from hermes_constants import get_hermes_home
+            base_dir = get_hermes_home()
+        except ImportError:
+            base_dir = self._hermes_home if self._hermes_home else os.path.expanduser("~/.hermes")
+        return os.path.join(str(base_dir), "mempalace_db")
 
     def system_prompt_block(self) -> str:
         return (
