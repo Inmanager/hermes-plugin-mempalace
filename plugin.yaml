@@ -1,0 +1,5 @@
+name: mempalace
+version: 1.0.0
+description: "MemPalace memory provider for Hermes"
+author: hermes
+license: MIT
