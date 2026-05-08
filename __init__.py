@@ -62,6 +62,8 @@ class MemPalaceMemoryProvider(MemoryProvider):
         self._sync_thread = None
         self._workspace = ""
         self._hermes_home = ""
+        self._db_lock = threading.Lock()
+        self._collection_cache = None
 
     @property
     def name(self) -> str:
@@ -88,6 +90,21 @@ class MemPalaceMemoryProvider(MemoryProvider):
             base_dir = self._hermes_home if self._hermes_home else os.path.expanduser("~/.hermes")
         return os.path.join(str(base_dir), "mempalace_db")
 
+    def _get_collection_safe(self, db_dir):
+        if self._collection_cache is not None:
+            return self._collection_cache
+            
+        from mempalace.palace import get_collection
+        try:
+            from mempalace.backends.chroma import quarantine_stale_hnsw, _fix_blob_seq_ids
+            _fix_blob_seq_ids(db_dir)
+            quarantine_stale_hnsw(db_dir, stale_seconds=3600.0)
+        except ImportError:
+            pass  # Older mempalace version without auto-heal
+            
+        self._collection_cache = get_collection(db_dir)
+        return self._collection_cache
+
     def system_prompt_block(self) -> str:
         return (
             "# MemPalace Memory\n"
@@ -111,7 +128,9 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 from mempalace.searcher import search_memories
                 db_dir = self._get_db_dir()
                 os.makedirs(db_dir, exist_ok=True)
-                res = search_memories(query, db_dir, wing=self._user_id, n_results=5)
+                with self._db_lock:
+                    self._get_collection_safe(db_dir) # Ensure initialized
+                    res = search_memories(query, db_dir, wing=self._user_id, n_results=5)
                 results = res.get('results', [])
                 if results:
                     lines = [r['text'] for r in results if 'text' in r]
@@ -128,18 +147,18 @@ class MemPalaceMemoryProvider(MemoryProvider):
             try:
                 import time
                 from mempalace.miner import add_drawer
-                from mempalace.palace import get_collection
                 
                 db_dir = self._get_db_dir()
                 os.makedirs(db_dir, exist_ok=True)
-                col = get_collection(db_dir)
                 
                 text_to_mine = f"User: {user_content}\nAssistant: {assistant_content}"
                 room = f"session_{session_id}" if session_id else "default_session"
                 wing = self._user_id
                 source = f"turn_{int(time.time())}"
                 
-                add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
+                with self._db_lock:
+                    col = self._get_collection_safe(db_dir)
+                    add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
             except Exception as e:
                 logger.warning(f"MemPalace sync failed: {e}")
 
@@ -160,7 +179,9 @@ class MemPalaceMemoryProvider(MemoryProvider):
             if tool_name == "mempalace_profile":
                 try:
                     from mempalace.searcher import search_memories
-                    res = search_memories("", db_dir, wing=self._user_id, n_results=50)
+                    with self._db_lock:
+                        self._get_collection_safe(db_dir) # Ensure initialized
+                        res = search_memories("", db_dir, wing=self._user_id, n_results=50)
                     results = res.get('results', [])
                     if not results:
                         return json.dumps({"result": "No memories stored yet."})
@@ -175,7 +196,9 @@ class MemPalaceMemoryProvider(MemoryProvider):
                     return tool_error("Missing required parameter: query")
                 try:
                     from mempalace.searcher import search_memories
-                    res = search_memories(query, db_dir, wing=self._user_id, n_results=10)
+                    with self._db_lock:
+                        self._get_collection_safe(db_dir) # Ensure initialized
+                        res = search_memories(query, db_dir, wing=self._user_id, n_results=10)
                     results = res.get('results', [])
                     if not results:
                         return json.dumps({"result": "No relevant memories found."})
@@ -191,9 +214,9 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 try:
                     import time
                     from mempalace.miner import add_drawer
-                    from mempalace.palace import get_collection
-                    col = get_collection(db_dir)
-                    add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
+                    with self._db_lock:
+                        col = self._get_collection_safe(db_dir)
+                        add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
                     return json.dumps({"result": "Fact stored."})
                 except Exception as e:
                     return tool_error(f"Failed to store: {e}")
