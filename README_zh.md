@@ -54,3 +54,10 @@ memory:
 hermes memory status
 ```
 如果你看到活动提供者（active provider）显示为 `mempalace`，那么一切就绪啦！
+
+## 如何更新（老用户升级）
+如果你之前已经安装过旧版本，现在想要更新到最新版（比如 v1.1.0，包含重要错误修复），只需要打开终端，运行下面这一行命令：
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+更新完成后，重启你的 Hermes 即可生效！完全不需要重新配置。

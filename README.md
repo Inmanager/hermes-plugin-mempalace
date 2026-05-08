@@ -53,3 +53,10 @@ Run this command to check if it's working:
 hermes memory status
 ```
 If you see `mempalace` listed as the active provider, you're all set!
+
+## How to Update
+If you already installed a previous version and want to update to the latest release (e.g., v1.1.0), just run this command in your terminal:
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+Restart your Hermes agent, and you will be on the latest version!
