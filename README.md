@@ -7,9 +7,16 @@ This is a **Memory Plugin** for [Hermes Agent](https://github.com/NousResearch/h
 ## What is the relationship with MemPalace?
 [MemPalace](https://github.com/MemPalace/mempalace) is an excellent, standalone, local AI memory database. Think of it as a highly organized brain or filing cabinet for AI.
 
-This plugin is the **bridge** that connects Hermes Agent to MemPalace. 
-- MemPalace does the heavy lifting: storing facts, embedding text, and searching for context.
-- This Plugin tells Hermes *how* to talk to MemPalace, so Hermes automatically saves your conversations and recalls past facts before replying to you.
+Objectively speaking, MemPalace natively provides a standard MCP (Model Context Protocol) interface, which means it works "out-of-the-box" with any MCP-compatible client.
+
+**Since it works out of the box, why build a dedicated plugin?**
+
+While invoking MemPalace via the MCP protocol is perfectly viable, it introduces a significant architectural pain point: **high Token consumption and extra request latency**. In a traditional MCP setup, memory storage and retrieval are exposed to the LLM as "Tools". The system has to repeatedly pass lengthy tool definitions, invocation steps, and retrieval results back and forth as context to the LLM. For high-frequency memory management operations, this not only wastes your precious Token quota but also slows down the model's response time.
+
+To solve this, this plugin uses a far more optimized integration approach:
+- **Native Pipeline Integration**: The plugin bypasses the generic MCP protocol layer. Instead, it uses internal APIs to plug MemPalace's core capabilities directly and seamlessly into Hermes Agent's low-level memory processing pipeline.
+- **Silent Context Injection**: MemPalace still handles the heavy lifting like text vectorization and similarity search. However, this plugin silently preloads relevant memories into the system context in the background *before* the LLM generates a reply, and automatically archives the conversation asynchronously afterwards.
+- **Ultimate Performance and Cost Optimization**: The LLM no longer needs to frequently "proactively call a tool" to recall the past. This grants Hermes long-term memory with zero extra interaction turns, keeping Token overhead and latency to an absolute minimum.
 
 ## Why do I need this? (Use Cases)
 By default, when you start a new chat with Hermes, it forgets everything from previous chats. 
