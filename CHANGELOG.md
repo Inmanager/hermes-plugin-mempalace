@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-05-27
+
+### 🇺🇸 English
+
+**Fixed**
+- **Rebuilt Collection Auto-Reconnect**: Fixed a failure mode where MemPalace index rebuilds changed the internal ChromaDB collection ID and the plugin kept using a stale cached handle, causing `Collection [...] does not exist`.
+- **Graceful Search Degradation**: Fixed a misleading empty-state path where semantic search failures could surface as `No memories stored yet.` even though the database still contained memories.
+- **Safer Read/Write Retry Path**: Added stale-collection retry handling for profile reads, semantic search, background prefetch, and memory writes.
+
+**Changed**
+- Added a lightweight fallback search path based on stored drawer content so the plugin can still surface useful memory when vector search is temporarily unhealthy.
+
+**How to update:**
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+
+---
+
+### 🇨🇳 中文版
+
+**修复 (Fixed)**
+- **重建后的 Collection 自动重连**: 修复了 MemPalace 索引重建后内部 ChromaDB collection ID 变化，但插件仍继续使用旧缓存句柄，最终报出 `Collection [...] does not exist` 的问题。
+- **搜索异常时不再误报空记忆**: 修复了语义搜索失败时被错误显示为 `No memories stored yet.` 的问题。即使数据库里实际上还有记忆，也不会再被误判成“空状态”。
+- **更稳的读写重试路径**: 为 profile 读取、语义搜索、后台 prefetch、记忆写入增加了 stale collection 自动重试。
+
+**变更 (Changed)**
+- 新增基于已存 drawer 文本的轻量 fallback 检索路径，在向量搜索临时异常时，插件仍能尽量返回可用记忆。
+
+**如何更新 (How to update):**
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+
 ## [1.1.0] - 2026-05-08
 
 ### 🇺🇸 English
