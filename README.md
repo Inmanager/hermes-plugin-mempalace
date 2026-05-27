@@ -62,8 +62,12 @@ hermes memory status
 If you see `mempalace` listed as the active provider, you're all set!
 
 ## How to Update
-If you already installed a previous version and want to update to the latest release (e.g., v1.1.0), just run this command in your terminal:
+If you already installed a previous version and want to update to the latest release (e.g., v1.2.0), just run this command in your terminal:
 ```bash
 cd ~/.hermes/plugins/mempalace && git pull origin main
 ```
 Restart your Hermes agent, and you will be on the latest version!
+
+## What's New in v1.2.0
+- Automatically reconnects when a rebuilt MemPalace collection gets a new internal ID, preventing `Collection [...] does not exist` errors after index repair/rebuild.
+- Falls back to direct stored-memory reads when semantic search temporarily fails, avoiding false `No memories stored yet.` reports when the database still contains data.

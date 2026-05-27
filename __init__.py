@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, List
@@ -91,10 +92,17 @@ class MemPalaceMemoryProvider(MemoryProvider):
         return os.path.join(str(base_dir), "mempalace_db")
 
     def _get_collection_safe(self, db_dir):
-        if self._collection_cache is not None:
-            return self._collection_cache
-            
         from mempalace.palace import get_collection
+        if self._collection_cache is not None:
+            try:
+                self._collection_cache.count()
+                return self._collection_cache
+            except Exception as exc:
+                if self._is_stale_collection_error(exc):
+                    logger.warning("MemPalace cached collection went stale, reconnecting: %s", exc)
+                    self._collection_cache = None
+                else:
+                    raise
         try:
             from mempalace.backends.chroma import quarantine_stale_hnsw, _fix_blob_seq_ids
             _fix_blob_seq_ids(db_dir)
@@ -104,6 +112,94 @@ class MemPalaceMemoryProvider(MemoryProvider):
             
         self._collection_cache = get_collection(db_dir)
         return self._collection_cache
+
+    @staticmethod
+    def _is_stale_collection_error(exc) -> bool:
+        msg = str(exc)
+        needles = (
+            "does not exist",
+            "Error getting collection",
+            "Error finding id",
+            "Collection [",
+        )
+        return any(needle in msg for needle in needles)
+
+    def _clear_collection_cache(self):
+        self._collection_cache = None
+
+    def _retry_on_stale_collection(self, fn):
+        try:
+            return fn()
+        except Exception as exc:
+            if not self._is_stale_collection_error(exc):
+                raise
+            logger.warning("MemPalace stale collection detected, retrying with fresh handle: %s", exc)
+            self._clear_collection_cache()
+            return fn()
+
+    def _list_memories(self, db_dir, *, room=None, limit=50):
+        def _run():
+            col = self._get_collection_safe(db_dir)
+            where = {"wing": self._user_id}
+            if room:
+                where["room"] = room
+            return col.get(where=where, include=["documents", "metadatas"], limit=limit)
+
+        return self._retry_on_stale_collection(_run)
+
+    def _fallback_search(self, db_dir, query: str, *, limit=10):
+        batch = self._list_memories(db_dir, limit=500)
+        docs = batch.documents or []
+        metas = batch.metadatas or []
+        if not docs:
+            return {"results": []}
+
+        tokens = [t for t in re.findall(r"\w+", (query or "").lower()) if t]
+        scored = []
+        for doc, meta in zip(docs, metas):
+            text = doc or ""
+            hay = text.lower()
+            score = 0
+            if not tokens:
+                score = 1
+            else:
+                score = sum(hay.count(tok) for tok in tokens)
+                if query and query.lower() in hay:
+                    score += max(2, len(tokens))
+            if score <= 0:
+                continue
+            scored.append(
+                {
+                    "text": text,
+                    "similarity": round(min(0.99, 0.3 + 0.1 * score), 3),
+                    "metadata": meta or {},
+                    "_score": score,
+                }
+            )
+
+        scored.sort(key=lambda item: item["_score"], reverse=True)
+        for item in scored:
+            item.pop("_score", None)
+        return {"results": scored[:limit]}
+
+    def _search_memories_safe(self, db_dir, query: str, *, limit=10):
+        from mempalace.searcher import search_memories
+
+        try:
+            def _run():
+                with self._db_lock:
+                    self._get_collection_safe(db_dir)
+                    return search_memories(query, db_dir, wing=self._user_id, n_results=limit)
+
+            res = self._retry_on_stale_collection(_run)
+        except Exception as exc:
+            logger.warning("MemPalace semantic search failed, using fallback grep: %s", exc)
+            return self._fallback_search(db_dir, query, limit=limit)
+
+        if isinstance(res, dict) and res.get("error"):
+            logger.warning("MemPalace semantic search returned error, using fallback grep: %s", res["error"])
+            return self._fallback_search(db_dir, query, limit=limit)
+        return res
 
     def system_prompt_block(self) -> str:
         return (
@@ -125,12 +221,9 @@ class MemPalaceMemoryProvider(MemoryProvider):
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         def _run():
             try:
-                from mempalace.searcher import search_memories
                 db_dir = self._get_db_dir()
                 os.makedirs(db_dir, exist_ok=True)
-                with self._db_lock:
-                    self._get_collection_safe(db_dir) # Ensure initialized
-                    res = search_memories(query, db_dir, wing=self._user_id, n_results=5)
+                res = self._search_memories_safe(db_dir, query, limit=5)
                 results = res.get('results', [])
                 if results:
                     lines = [r['text'] for r in results if 'text' in r]
@@ -157,8 +250,10 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 source = f"turn_{int(time.time())}"
                 
                 with self._db_lock:
-                    col = self._get_collection_safe(db_dir)
-                    add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
+                    def _run():
+                        col = self._get_collection_safe(db_dir)
+                        add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
+                    self._retry_on_stale_collection(_run)
             except Exception as e:
                 logger.warning(f"MemPalace sync failed: {e}")
 
@@ -178,15 +273,17 @@ class MemPalaceMemoryProvider(MemoryProvider):
             
             if tool_name == "mempalace_profile":
                 try:
-                    from mempalace.searcher import search_memories
-                    with self._db_lock:
-                        self._get_collection_safe(db_dir) # Ensure initialized
-                        res = search_memories("", db_dir, wing=self._user_id, n_results=50)
-                    results = res.get('results', [])
+                    batch = self._list_memories(db_dir, limit=50)
+                    docs = batch.documents or []
+                    metas = batch.metadatas or []
+                    ordered = []
+                    for doc, meta in zip(docs, metas):
+                        ordered.append((meta.get("filed_at", ""), doc))
+                    ordered.sort(key=lambda item: item[0], reverse=True)
+                    results = [doc for _, doc in ordered if doc]
                     if not results:
                         return json.dumps({"result": "No memories stored yet."})
-                    lines = [r['text'] for r in results if 'text' in r]
-                    return json.dumps({"result": "\n".join(lines), "count": len(lines)})
+                    return json.dumps({"result": "\n".join(results), "count": len(results)})
                 except Exception as e:
                     return tool_error(f"Failed to fetch profile: {e}")
 
@@ -195,10 +292,7 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 if not query:
                     return tool_error("Missing required parameter: query")
                 try:
-                    from mempalace.searcher import search_memories
-                    with self._db_lock:
-                        self._get_collection_safe(db_dir) # Ensure initialized
-                        res = search_memories(query, db_dir, wing=self._user_id, n_results=10)
+                    res = self._search_memories_safe(db_dir, query, limit=10)
                     results = res.get('results', [])
                     if not results:
                         return json.dumps({"result": "No relevant memories found."})
@@ -215,8 +309,10 @@ class MemPalaceMemoryProvider(MemoryProvider):
                     import time
                     from mempalace.miner import add_drawer
                     with self._db_lock:
-                        col = self._get_collection_safe(db_dir)
-                        add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
+                        def _run():
+                            col = self._get_collection_safe(db_dir)
+                            add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
+                        self._retry_on_stale_collection(_run)
                     return json.dumps({"result": "Fact stored."})
                 except Exception as e:
                     return tool_error(f"Failed to store: {e}")

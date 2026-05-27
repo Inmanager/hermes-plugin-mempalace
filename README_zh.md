@@ -63,8 +63,12 @@ hermes memory status
 如果你看到活动提供者（active provider）显示为 `mempalace`，那么一切就绪啦！
 
 ## 如何更新（老用户升级）
-如果你之前已经安装过旧版本，现在想要更新到最新版（比如 v1.1.0，包含重要错误修复），只需要打开终端，运行下面这一行命令：
+如果你之前已经安装过旧版本，现在想要更新到最新版（比如 v1.2.0，包含重要错误修复），只需要打开终端，运行下面这一行命令：
 ```bash
 cd ~/.hermes/plugins/mempalace && git pull origin main
 ```
 更新完成后，重启你的 Hermes 即可生效！完全不需要重新配置。
+
+## v1.2.0 新增修复
+- 当 MemPalace 做过索引重建、内部 collection ID 变化后，插件会自动重新连接，避免出现 `Collection [...] does not exist` 这类错误。
+- 当语义搜索临时异常但数据库里其实还有记忆时，插件会回退到直接读取已存内容，避免错误地显示 `No memories stored yet.`。
