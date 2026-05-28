@@ -6,12 +6,18 @@ import os
 import re
 import threading
 import time
+from contextlib import contextmanager
 from typing import Any, Dict, List
 
 from agent.memory_provider import MemoryProvider
 from tools.registry import tool_error
 
 logger = logging.getLogger(__name__)
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 PROFILE_SCHEMA = {
     "name": "mempalace_profile",
@@ -65,6 +71,7 @@ class MemPalaceMemoryProvider(MemoryProvider):
         self._hermes_home = ""
         self._db_lock = threading.Lock()
         self._collection_cache = None
+        self._last_repair_attempt = 0.0
 
     @property
     def name(self) -> str:
@@ -127,6 +134,42 @@ class MemPalaceMemoryProvider(MemoryProvider):
     def _clear_collection_cache(self):
         self._collection_cache = None
 
+    @contextmanager
+    def _process_db_lock(self, db_dir):
+        if fcntl is None:
+            yield
+            return
+        os.makedirs(db_dir, exist_ok=True)
+        lock_path = os.path.join(db_dir, ".hermes-mempalace.lock")
+        with open(lock_path, "a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _is_corrupt_index_error(self, exc) -> bool:
+        msg = str(exc)
+        return "Error finding id" in msg or "Internal error" in msg
+
+    def _attempt_auto_repair(self, db_dir, exc) -> bool:
+        if not self._is_corrupt_index_error(exc):
+            return False
+        now = time.time()
+        if now - self._last_repair_attempt < 1800:
+            logger.warning("MemPalace index looks corrupt but auto-repair is cooling down: %s", exc)
+            return False
+        self._last_repair_attempt = now
+        try:
+            logger.warning("MemPalace query failed with corrupt-index signature, rebuilding index: %s", exc)
+            from mempalace.repair import rebuild_index
+            rebuild_index(palace_path=db_dir)
+            self._clear_collection_cache()
+            return True
+        except Exception as repair_exc:
+            logger.warning("MemPalace auto-repair failed: %s", repair_exc)
+            return False
+
     def _retry_on_stale_collection(self, fn):
         try:
             return fn()
@@ -139,11 +182,12 @@ class MemPalaceMemoryProvider(MemoryProvider):
 
     def _list_memories(self, db_dir, *, room=None, limit=50):
         def _run():
-            col = self._get_collection_safe(db_dir)
-            where = {"wing": self._user_id}
-            if room:
-                where["room"] = room
-            return col.get(where=where, include=["documents", "metadatas"], limit=limit)
+            with self._process_db_lock(db_dir):
+                col = self._get_collection_safe(db_dir)
+                where = {"wing": self._user_id}
+                if room:
+                    where["room"] = room
+                return col.get(where=where, include=["documents", "metadatas"], limit=limit)
 
         return self._retry_on_stale_collection(_run)
 
@@ -187,12 +231,25 @@ class MemPalaceMemoryProvider(MemoryProvider):
 
         try:
             def _run():
-                with self._db_lock:
-                    self._get_collection_safe(db_dir)
-                    return search_memories(query, db_dir, wing=self._user_id, n_results=limit)
+                with self._process_db_lock(db_dir):
+                    with self._db_lock:
+                        self._get_collection_safe(db_dir)
+                        return search_memories(query, db_dir, wing=self._user_id, n_results=limit)
 
             res = self._retry_on_stale_collection(_run)
         except Exception as exc:
+            if self._attempt_auto_repair(db_dir, exc):
+                try:
+                    def _rerun():
+                        with self._process_db_lock(db_dir):
+                            with self._db_lock:
+                                self._get_collection_safe(db_dir)
+                                return search_memories(query, db_dir, wing=self._user_id, n_results=limit)
+                    res = self._retry_on_stale_collection(_rerun)
+                    if not (isinstance(res, dict) and res.get("error")):
+                        return res
+                except Exception as retry_exc:
+                    logger.warning("MemPalace search still failed after auto-repair, using fallback grep: %s", retry_exc)
             logger.warning("MemPalace semantic search failed, using fallback grep: %s", exc)
             return self._fallback_search(db_dir, query, limit=limit)
 
@@ -249,11 +306,12 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 wing = self._user_id
                 source = f"turn_{int(time.time())}"
                 
-                with self._db_lock:
-                    def _run():
-                        col = self._get_collection_safe(db_dir)
-                        add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
-                    self._retry_on_stale_collection(_run)
+                with self._process_db_lock(db_dir):
+                    with self._db_lock:
+                        def _run():
+                            col = self._get_collection_safe(db_dir)
+                            add_drawer(col, wing, room, text_to_mine, source, 0, self._agent_id)
+                        self._retry_on_stale_collection(_run)
             except Exception as e:
                 logger.warning(f"MemPalace sync failed: {e}")
 
@@ -308,11 +366,12 @@ class MemPalaceMemoryProvider(MemoryProvider):
                 try:
                     import time
                     from mempalace.miner import add_drawer
-                    with self._db_lock:
-                        def _run():
-                            col = self._get_collection_safe(db_dir)
-                            add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
-                        self._retry_on_stale_collection(_run)
+                    with self._process_db_lock(db_dir):
+                        with self._db_lock:
+                            def _run():
+                                col = self._get_collection_safe(db_dir)
+                                add_drawer(col, self._user_id, "manual_mine", text, f"manual_{int(time.time())}", 0, self._agent_id)
+                            self._retry_on_stale_collection(_run)
                     return json.dumps({"result": "Fact stored."})
                 except Exception as e:
                     return tool_error(f"Failed to store: {e}")

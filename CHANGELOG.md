@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-05-28
+
+### 🇺🇸 English
+
+**Fixed**
+- **Cross-Process Access Serialization**: Added an OS-level file lock around MemPalace database access so multiple Hermes processes (gateway, CLI, web UI, background workers) stop stepping on the same ChromaDB palace concurrently.
+- **Automatic Index Self-Healing**: Added one-shot automatic repair when the plugin detects a corrupt-index signature such as `Error finding id`, reducing cases where Hermes appears to "forget" everything until a manual rebuild.
+
+**Changed**
+- Search retry paths now combine stale-collection reconnects, cross-process locking, and bounded auto-repair before falling back to text-only retrieval.
+
+**How to update:**
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+
+---
+
+### 🇨🇳 中文版
+
+**修复 (Fixed)**
+- **跨进程访问串行化**: 为 MemPalace 数据库访问增加了操作系统级文件锁，避免 gateway、CLI、web UI、后台 worker 等多个 Hermes 进程同时踩同一套 ChromaDB palace。
+- **索引自动自愈**: 当插件检测到 `Error finding id` 这类典型索引损坏特征时，会自动尝试一次修复，减少 Hermes 看起来像“突然失忆”、必须手工 rebuild 的情况。
+
+**变更 (Changed)**
+- 搜索重试路径现在会组合 stale collection 重连、跨进程锁、受控自动修复，只有这些都失败后才退回纯文本 fallback 检索。
+
+**如何更新 (How to update):**
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+
 ## [1.2.0] - 2026-05-27
 
 ### 🇺🇸 English
