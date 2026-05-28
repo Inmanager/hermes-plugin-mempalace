@@ -62,12 +62,58 @@ hermes memory status
 If you see `mempalace` listed as the active provider, you're all set!
 
 ## How to Update
-If you already installed a previous version and want to update to the latest release (e.g., v1.2.0), just run this command in your terminal:
+If you already installed a previous version and want to update to the latest release (e.g., v1.3.0), just run this command in your terminal:
 ```bash
 cd ~/.hermes/plugins/mempalace && git pull origin main
 ```
 Restart your Hermes agent, and you will be on the latest version!
 
+## What's New in v1.3.0
+- Serializes cross-process MemPalace access with a file lock so multiple Hermes processes are less likely to corrupt the same ChromaDB index.
+- Adds one-shot automatic index repair when the plugin detects a classic corrupt-index signature such as `Error finding id`.
+
 ## What's New in v1.2.0
 - Automatically reconnects when a rebuilt MemPalace collection gets a new internal ID, preventing `Collection [...] does not exist` errors after index repair/rebuild.
 - Falls back to direct stored-memory reads when semantic search temporarily fails, avoiding false `No memories stored yet.` reports when the database still contains data.
+
+## Troubleshooting
+
+### Error: `Collection [...] does not exist`
+This usually means MemPalace rebuilt its internal ChromaDB collection, but Hermes was still holding a stale cached handle.
+
+What to do:
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+Then restart Hermes.
+
+Success sign:
+- Hermes starts normally
+- Memory search works again instead of raising the collection-ID error
+
+### Error: `No memories stored yet.`
+This message can be misleading. In some failure modes the vector search path is broken while the underlying SQLite data is still present.
+
+What to do:
+- Update to the latest plugin version
+- Restart Hermes
+- Try a direct memory search again
+
+Success sign:
+- Hermes can show older stored content again instead of reporting an empty memory state
+
+### Error: `Error finding id`
+This usually indicates a damaged or drifted ChromaDB HNSW index, often after repeated concurrent access from multiple Hermes processes.
+
+What to do:
+1. Update the plugin to the latest version
+2. Restart Hermes
+3. If the problem still appears, rebuild the MemPalace index manually:
+
+```bash
+python3 -m mempalace.repair rebuild --palace ~/.hermes/mempalace_db
+```
+
+Success sign:
+- Semantic search returns real memories again
+- Hermes no longer behaves like it "forgot everything"

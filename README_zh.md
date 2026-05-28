@@ -63,12 +63,58 @@ hermes memory status
 如果你看到活动提供者（active provider）显示为 `mempalace`，那么一切就绪啦！
 
 ## 如何更新（老用户升级）
-如果你之前已经安装过旧版本，现在想要更新到最新版（比如 v1.2.0，包含重要错误修复），只需要打开终端，运行下面这一行命令：
+如果你之前已经安装过旧版本，现在想要更新到最新版（比如 v1.3.0，包含重要错误修复），只需要打开终端，运行下面这一行命令：
 ```bash
 cd ~/.hermes/plugins/mempalace && git pull origin main
 ```
 更新完成后，重启你的 Hermes 即可生效！完全不需要重新配置。
 
+## v1.3.0 新增修复
+- 增加跨进程文件锁，降低多个 Hermes 进程同时访问同一套 MemPalace / ChromaDB 时把索引写坏的概率。
+- 当插件检测到 `Error finding id` 这类典型索引损坏信号时，会自动尝试一次索引修复。
+
 ## v1.2.0 新增修复
 - 当 MemPalace 做过索引重建、内部 collection ID 变化后，插件会自动重新连接，避免出现 `Collection [...] does not exist` 这类错误。
 - 当语义搜索临时异常但数据库里其实还有记忆时，插件会回退到直接读取已存内容，避免错误地显示 `No memories stored yet.`。
+
+## 常见故障排查
+
+### 报错：`Collection [...] does not exist`
+这通常表示 MemPalace 在底层重建了 ChromaDB collection，但 Hermes 还拿着旧的缓存句柄。
+
+怎么做：
+```bash
+cd ~/.hermes/plugins/mempalace && git pull origin main
+```
+然后重启 Hermes。
+
+成功标志：
+- Hermes 可以正常启动
+- 记忆搜索恢复，不再报 collection ID 不存在
+
+### 报错：`No memories stored yet.`
+这条提示有时是误导性的。某些情况下，向量搜索链路坏了，但底层 SQLite 里的记忆其实还在。
+
+怎么做：
+- 更新到最新插件版本
+- 重启 Hermes
+- 再尝试一次记忆搜索
+
+成功标志：
+- Hermes 能重新读出旧记忆，而不是继续显示“空记忆”
+
+### 报错：`Error finding id`
+这通常表示 ChromaDB 的 HNSW 索引已经损坏或发生漂移，常见诱因是多个 Hermes 进程反复并发访问同一套数据库。
+
+怎么做：
+1. 更新插件到最新版本
+2. 重启 Hermes
+3. 如果问题仍然存在，手动重建 MemPalace 索引：
+
+```bash
+python3 -m mempalace.repair rebuild --palace ~/.hermes/mempalace_db
+```
+
+成功标志：
+- 语义搜索再次返回真实记忆
+- Hermes 不再表现得像“突然失忆”
